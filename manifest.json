@@ -3,7 +3,7 @@
     "version": "0.0.1",
     "manifest_version": 2,
     "description": "Set playback speed of video in browser to any number.",
-    "homepage_url": "https://matthewfinley.dev",
+    "homepage_url": "https://github.com/m-fin/Custom-Playback-Speed",
     "background": {
         "scripts": [
             "background.js"
