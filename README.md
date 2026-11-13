@@ -5,6 +5,8 @@ Chrome extension that allows you to set the playback speed of any video in your 
 
 Click the toolbar button, type a speed (for example `1.75`, `2,5` or `3x`), and every video on the page switches to it. The prompt starts with the current speed. Chrome allows speeds from 0.0625 to 16.
 
+Shortcut: **Alt+Shift+S** (change it at `chrome://extensions/shortcuts`). On pages where Chrome doesn't let extensions run (like `chrome://` pages, the Chrome Web Store and the New Tab page), the button shows a red **!** and its tooltip explains why.
+
 [Chrome Webstore Link](https://chrome.google.com/webstore/detail/custom-playback-speed/giolnpkidakdmghddhlikfjbakcgejld)
 
 ## Install from source
