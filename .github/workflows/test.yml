@@ -14,7 +14,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 20
-      - run: node --test test/*.test.js*.test.js
+      - run: node --test test/*.test.js
       - name: manifest.json is valid JSON and lists files that exist
         run: |
           node -e '
