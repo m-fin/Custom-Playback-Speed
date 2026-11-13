@@ -1,5 +1,5 @@
 // Runs playback.js and the bookmarklet against a fake page. No dependencies:
-//   node --test test/
+//   node --test test/*.test.js
 const test = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
