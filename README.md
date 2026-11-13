@@ -23,5 +23,5 @@ javascript:(function(){var v=[].slice.call(document.querySelectorAll('video'));i
 
 ## Tests
 ```sh
-node --test test/playback.test.js
+node --test test/*.test.js
 ```
