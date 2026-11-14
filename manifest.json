@@ -1,6 +1,6 @@
 {
     "name": "Custom Playback Speed",
-    "version": "0.1.0",
+    "version": "0.2.0",
     "manifest_version": 3,
     "description": "Set the playback speed of videos in your browser to any number.",
     "background": {
@@ -30,6 +30,24 @@
                 "default": "Alt+Shift+S"
             },
             "description": "Set playback speed"
+        },
+        "speed-up": {
+            "suggested_key": {
+                "default": "Alt+Shift+Period"
+            },
+            "description": "Speed up by 0.25"
+        },
+        "speed-down": {
+            "suggested_key": {
+                "default": "Alt+Shift+Comma"
+            },
+            "description": "Slow down by 0.25"
+        },
+        "speed-reset": {
+            "suggested_key": {
+                "default": "Alt+Shift+0"
+            },
+            "description": "Reset playback speed to 1x"
         }
     }
 }
