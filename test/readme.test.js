@@ -19,3 +19,13 @@ test('bookmarklet stays a single line that fits in a bookmark URL', () => {
     assert.ok(condensed.startsWith('javascript:'));
     assert.ok(condensed.length < 2000, `bookmarklet is ${condensed.length} chars`);
 });
+
+test('README documents the speed-step shortcuts and where to change them', () => {
+    assert.match(readme, /Alt\+Shift\+S/);
+    assert.match(readme, /Alt\+Shift\+Period/);
+    assert.match(readme, /Alt\+Shift\+Comma/);
+    assert.match(readme, /Alt\+Shift\+0/);
+    assert.match(readme, /chrome:\/\/extensions\/shortcuts/);
+    assert.match(readme, /0\.25/);
+    assert.match(readme, /No video/);
+});
