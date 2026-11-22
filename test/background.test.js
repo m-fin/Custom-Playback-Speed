@@ -7,7 +7,7 @@ const vm = require('node:vm');
 
 const code = fs.readFileSync(path.join(__dirname, '..', 'background.js'), 'utf8');
 
-function load({ inject, tabs } = {}) {
+function load({ inject, tabs, stored } = {}) {
     const calls = [];
     const listeners = {};
     const action = {};
@@ -25,6 +25,15 @@ function load({ inject, tabs } = {}) {
             }
         },
         commands: { onCommand: { addListener: (f) => { listeners.command = f; } } },
+        storage: {
+            sync: {
+                get: async (keys) => {
+                    calls.push(['storage.get', JSON.parse(JSON.stringify(keys))]);
+                    if (typeof stored === 'function') return stored();
+                    return {};
+                }
+            }
+        },
         scripting: {
             executeScript: async (arg) => {
                 const recorded = {};
@@ -66,13 +75,18 @@ test('navigating clears the badge for that tab only', async () => {
 test('manifest: keyboard shortcut opens the action', () => {
     const m = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'manifest.json'), 'utf8'));
     assert.strictEqual(m.commands._execute_action.suggested_key.default, 'Alt+Shift+S');
-    assert.deepStrictEqual(m.permissions, ['activeTab', 'scripting'], 'no new permissions');
+    assert.deepStrictEqual(m.permissions, ['activeTab', 'scripting', 'storage']);
+    assert.ok(m.host_permissions == null);
+    assert.ok(m.optional_host_permissions == null);
 });
 
 test('manifest: step shortcuts stay within the four suggested-key limit', () => {
     const m = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'manifest.json'), 'utf8'));
-    assert.strictEqual(m.version, '0.2.0');
-    assert.deepStrictEqual(m.permissions, ['activeTab', 'scripting']);
+    assert.strictEqual(m.version, '0.3.0');
+    assert.deepStrictEqual(m.permissions, ['activeTab', 'scripting', 'storage']);
+    assert.deepStrictEqual(m.options_ui, { page: 'options.html', open_in_tab: true });
+    assert.ok(fs.existsSync(path.join(__dirname, '..', 'options.html')));
+    assert.ok(fs.existsSync(path.join(__dirname, '..', 'options.js')));
     const commands = m.commands;
     assert.strictEqual(Object.keys(commands).length, 4, 'Chrome allows at most four suggested keys');
     assert.strictEqual(commands['speed-up'].suggested_key.default, 'Alt+Shift+Period');
@@ -94,7 +108,8 @@ for (const command of ['speed-up', 'speed-down', 'speed-reset']) {
         const scripts = calls.filter((c) => c[0] === 'executeScript');
         assert.deepStrictEqual(scripts[0][1], { target: { tabId: 9 }, files: ['speed.js'] });
         assert.strictEqual(scripts[1][1].func, 'function');
-        assert.deepStrictEqual(scripts[1][1].args, [command]);
+        assert.deepStrictEqual(calls.find((c) => c[0] === 'storage.get')[1], ['speedStep', 'minSpeed', 'maxSpeed']);
+        assert.deepStrictEqual(scripts[1][1].args, [command, {}]);
         assert.deepStrictEqual(scripts[1][1].target, { tabId: 9 });
         assert.deepStrictEqual(calls.find((c) => c[0] === 'setBadgeText')[1], { tabId: 9, text: '1.75' });
         assert.deepStrictEqual(calls.find((c) => c[0] === 'setBadgeBackgroundColor')[1], { tabId: 9, color: '#202124' });
@@ -127,6 +142,30 @@ test('a speed command with no active tab does nothing', async () => {
     const { calls, listeners } = load({ inject: () => [], tabs: () => [] });
     await listeners.command('speed-reset');
     assert.strictEqual(calls.some((c) => c[0] === 'executeScript'), false);
+});
+
+test('a speed command forwards saved step and limits to the page', async () => {
+    const saved = { speedStep: 0.05, minSpeed: 0.5, maxSpeed: 3 };
+    const { calls, listeners } = load({
+        inject: (arg) => (arg.files ? [] : [{ result: { speed: 1.05, text: '1.05x', badge: '1.05' } }]),
+        stored: () => saved
+    });
+    await listeners.command('speed-up');
+    const scripts = calls.filter((c) => c[0] === 'executeScript');
+    assert.deepStrictEqual(scripts[1][1].args, ['speed-up', saved]);
+    assert.deepStrictEqual(calls.find((c) => c[0] === 'setBadgeText')[1], { tabId: 9, text: '1.05' });
+});
+
+test('a storage failure still steps with default settings', async () => {
+    const { calls, listeners } = load({
+        inject: (arg) => (arg.files ? [] : [{ result: { speed: 1.25, text: '1.25x', badge: '1.25' } }]),
+        stored: () => { throw new Error('quota'); }
+    });
+    await listeners.command('speed-up');
+    const scripts = calls.filter((c) => c[0] === 'executeScript');
+    assert.deepStrictEqual(scripts[1][1].args, ['speed-up', {}]);
+    assert.strictEqual(calls.some((c) => c[0] === 'setBadgeText' && c[1].text === '!'), false);
+    assert.deepStrictEqual(calls.find((c) => c[0] === 'setBadgeText')[1], { tabId: 9, text: '1.25' });
 });
 
 test('an unknown command is ignored', async () => {

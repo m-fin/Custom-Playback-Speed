@@ -1,11 +1,29 @@
 // Clicking the toolbar button (or pressing Alt+Shift+S) runs playback.js in the current tab.
 // The step shortcuts (speed up, slow down, reset) run speed.js instead, with no prompt.
+// Their step and limits come from chrome.storage.sync (the options page). speed.js applies
+// them and falls back to its defaults when storage is missing or invalid.
 // Chrome blocks extensions on some pages (chrome://, the Chrome Web Store, the New Tab page, PDFs).
 // There, show a "!" badge with an explanation instead of failing silently.
-// A keyboard command grants activeTab, so scripting.executeScript needs no extra permission.
+// A keyboard command grants activeTab, so scripting.executeScript needs no extra host permission.
 const BLOCKED_TITLE = "Chrome doesn't let extensions change videos on this page";
 const DEFAULT_TITLE = 'Set playback speed';
 const SPEED_COMMANDS = { 'speed-up': true, 'speed-down': true, 'speed-reset': true };
+const SPEED_KEYS = ['speedStep', 'minSpeed', 'maxSpeed'];
+
+async function readStoredSpeedSettings() {
+    try {
+        if (!chrome.storage || !chrome.storage.sync || typeof chrome.storage.sync.get !== 'function') return {};
+        const items = await chrome.storage.sync.get(SPEED_KEYS);
+        if (!items || typeof items !== 'object') return {};
+        const stored = {};
+        for (const key of SPEED_KEYS) {
+            if (items[key] != null) stored[key] = items[key];
+        }
+        return stored;
+    } catch (err) {
+        return {};
+    }
+}
 
 async function showBlocked(tabId) {
     await chrome.action.setBadgeBackgroundColor({ tabId: tabId, color: '#b00020' });
@@ -32,15 +50,16 @@ chrome.tabs.onUpdated.addListener((tabId, info) => {
 });
 
 async function nudgeSpeed(tab, command) {
+    const stored = await readStoredSpeedSettings();
     try {
         await chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ['speed.js'] });
         const injected = await chrome.scripting.executeScript({
             target: { tabId: tab.id },
-            func: function (command) {
+            func: function (command, stored) {
                 var run = globalThis.runSpeedCommand;
-                return run ? run(command) : { speed: null, text: '', badge: '' };
+                return run ? run(command, stored) : { speed: null, text: '', badge: '' };
             },
-            args: [command]
+            args: [command, stored]
         });
         const result = injected && injected[0] && injected[0].result;
         if (result && typeof result.speed === 'number') {
