@@ -64,6 +64,74 @@ test('a non-finite current rate steps from 1', () => {
     assert.strictEqual(speed.nextSpeed(1, 'unknown'), null);
 });
 
+test('custom steps round off float drift and honor the clamp', () => {
+    assert.deepStrictEqual(speed.STEP_CHOICES, [0.05, 0.1, 0.25, 0.5]);
+    assert.strictEqual(speed.roundSpeed(1.2500000001), 1.25);
+    assert.strictEqual(speed.stepSpeed(1.2500000001, 0.05), 1.3);
+    assert.strictEqual(speed.stepSpeed(1.2500000001, 0.1), 1.35);
+    let rate = 1;
+    for (let i = 0; i < 20; i++) rate = speed.stepSpeed(rate, 0.05);
+    assert.strictEqual(rate, 2);
+    rate = 1;
+    for (let i = 0; i < 7; i++) rate = speed.stepSpeed(rate, 0.1);
+    assert.strictEqual(rate, 1.7);
+    rate = speed.MIN_SPEED;
+    const fromFloor = [];
+    for (let i = 0; i < 4; i++) {
+        rate = speed.stepSpeed(rate, 0.05);
+        fromFloor.push(rate);
+    }
+    assert.deepStrictEqual(fromFloor, [0.1125, 0.1625, 0.2125, 0.2625]);
+
+    const tight = { speedStep: 0.5, minSpeed: 1, maxSpeed: 1.25 };
+    assert.strictEqual(speed.nextSpeed(1, 'speed-up', tight), 1.25);
+    assert.strictEqual(speed.nextSpeed(1, 'speed-down', tight), 1);
+    assert.strictEqual(speed.nextSpeed(1.2500000001, 'speed-up', { speedStep: 0.05, maxSpeed: 1.26 }), 1.26);
+    assert.strictEqual(speed.nextSpeed(0.5, 'speed-down', { speedStep: 0.25, minSpeed: 0.5, maxSpeed: 4 }), 0.5);
+    assert.strictEqual(speed.nextSpeed(4, 'speed-reset', { minSpeed: 0.5, maxSpeed: 2 }), 1);
+    assert.strictEqual(speed.nextSpeed(4, 'speed-reset', { minSpeed: 1.5, maxSpeed: 3 }), 1.5);
+    assert.strictEqual(speed.nextSpeed(1, 'speed-up', { speedStep: 0.2 }), 1.25);
+    assert.strictEqual(speed.nextSpeed(Number.NaN, 'speed-down', { minSpeed: 2, maxSpeed: 4 }), 2);
+});
+
+test('invalid stored settings fall back to the 0.25 step and 0.0625–16', () => {
+    const defaults = { step: 0.25, min: 0.0625, max: 16 };
+    assert.deepStrictEqual(speed.resolveSettings(undefined), defaults);
+    assert.deepStrictEqual(speed.resolveSettings(null), defaults);
+    assert.deepStrictEqual(speed.resolveSettings('0.5'), defaults);
+    assert.deepStrictEqual(speed.resolveSettings(1), defaults);
+    assert.deepStrictEqual(speed.resolveSettings({}), defaults);
+    assert.deepStrictEqual(speed.resolveSettings([]), defaults);
+    assert.deepStrictEqual(speed.resolveSettings({ speedStep: 'nope', minSpeed: 'fast', maxSpeed: null }), defaults);
+    assert.deepStrictEqual(speed.resolveSettings({ speedStep: true, minSpeed: false, maxSpeed: {} }), defaults);
+    assert.deepStrictEqual(speed.resolveSettings({ speedStep: 0.2, minSpeed: 0, maxSpeed: 100 }), defaults);
+    assert.deepStrictEqual(speed.resolveSettings({ speedStep: -1, minSpeed: 10, maxSpeed: 2 }), defaults);
+    assert.deepStrictEqual(speed.resolveSettings({ speedStep: '', minSpeed: '', maxSpeed: '  ' }), defaults);
+    assert.deepStrictEqual(speed.resolveSettings({ speedStep: Number.POSITIVE_INFINITY, minSpeed: Number.NaN, maxSpeed: -5 }), defaults);
+    assert.deepStrictEqual(
+        speed.resolveSettings({ speedStep: '0.05', minSpeed: '0,5', maxSpeed: '3x' }),
+        { step: 0.05, min: 0.5, max: 3 }
+    );
+    assert.deepStrictEqual(
+        speed.resolveSettings({ speedStep: 0.1, minSpeed: 0, maxSpeed: 4 }),
+        { step: 0.1, min: 0.0625, max: 4 }
+    );
+    assert.deepStrictEqual(
+        speed.resolveSettings({ speedStep: '0.10', minSpeed: '1.2500000001', maxSpeed: 8 }),
+        { step: 0.1, min: 1.25, max: 8 }
+    );
+    const input = { speedStep: 0.5, minSpeed: 0.25, maxSpeed: 8 };
+    const once = speed.resolveSettings(input);
+    assert.deepStrictEqual(input, { speedStep: 0.5, minSpeed: 0.25, maxSpeed: 8 });
+    assert.deepStrictEqual(speed.resolveSettings(once), once);
+    assert.deepStrictEqual(speed.explainSettings({ minSpeed: 100 }).settings, defaults);
+    assert.strictEqual(speed.explainSettings({ minSpeed: 100 }).adjusted, true);
+    assert.strictEqual(speed.explainSettings({ speedStep: 0.2, minSpeed: 0.5, maxSpeed: 2 }).adjusted, true);
+    assert.strictEqual(speed.explainSettings({ speedStep: 0.1, minSpeed: 0.5, maxSpeed: 2 }).adjusted, false);
+    assert.strictEqual(speed.explainSettings({ speedStep: '', minSpeed: '', maxSpeed: '' }).adjusted, false);
+    assert.strictEqual(speed.explainSettings(null).adjusted, false);
+});
+
 test('labels stay short and exact', () => {
     assert.strictEqual(speed.formatSpeed(1), '1x');
     assert.strictEqual(speed.formatSpeed(1.75), '1.75x');
@@ -96,7 +164,7 @@ function loadPage(rates) {
         }
     };
     const sandbox = {
-        Math, Number, String, Array, isFinite,
+        Math, Number, String, Array, Object, isFinite,
         document: {
             documentElement: docEl,
             querySelectorAll: (sel) => (sel === 'video' ? vids : []),
@@ -186,4 +254,15 @@ test('holding the limit still confirms the speed', () => {
     const result = page.sandbox.runSpeedCommand('speed-up');
     assert.strictEqual(page.vids[0].playbackRate, 16);
     assert.strictEqual(result.text, '16x');
+});
+
+test('runSpeedCommand applies a stored step and clamp', () => {
+    const page = loadPage([1, 1]);
+    const result = page.sandbox.runSpeedCommand('speed-up', { speedStep: 0.5, minSpeed: 0.25, maxSpeed: 1.4 });
+    assert.deepStrictEqual(page.vids.map((v) => v.playbackRate), [1.4, 1.4]);
+    assert.strictEqual(result.text, '1.4x');
+    const again = loadPage([1]);
+    const fallback = again.sandbox.runSpeedCommand('speed-up', { speedStep: 'nope', minSpeed: 0, maxSpeed: 99 });
+    assert.strictEqual(again.vids[0].playbackRate, 1.25);
+    assert.strictEqual(fallback.text, '1.25x');
 });

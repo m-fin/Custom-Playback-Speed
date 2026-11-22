@@ -1,14 +1,17 @@
 // Playback-speed math plus the in-page runner for the step shortcuts.
 // Injected into the tab (it installs itself on globalThis) and required by the node tests.
+// Chrome's playbackRate is 0.0625–16; anything outside that throws NotSupportedError.
 (function (root) {
     var MIN_SPEED = 0.0625;
     var MAX_SPEED = 16;
     var SPEED_STEP = 0.25;
-    // Four decimal places keeps 0.0625 and 0.25 steps exact and folds binary
+    // Four decimal places keeps 0.0625 and the step choices exact and folds binary
     // noise such as 1.2500000001 back to 1.25.
     var ROUND_PLACES = 10000;
+    var STEP_CHOICES = [0.05, 0.1, SPEED_STEP, 0.5];
     var OVERLAY_MS = 1000;
     var FADE_MS = 200;
+    if (typeof Object !== 'undefined' && Object.freeze) STEP_CHOICES = Object.freeze(STEP_CHOICES);
 
     function roundSpeed(speed) {
         var n = Number(speed);
@@ -16,18 +19,87 @@
         return Math.round(n * ROUND_PLACES) / ROUND_PLACES;
     }
 
-    function clampSpeed(speed) {
-        var n = roundSpeed(speed);
-        if (!isFinite(n)) return 1;
-        if (n < MIN_SPEED) return MIN_SPEED;
-        if (n > MAX_SPEED) return MAX_SPEED;
+    // Numbers pass through. Strings accept "1,5" and "3x", matching the prompt.
+    // Anything else (objects, booleans) is not a stored speed.
+    function parseSpeed(value) {
+        if (typeof value === 'number') return value;
+        if (typeof value !== 'string') return NaN;
+        var text = value.trim().replace(',', '.').replace(/x$/i, '').trim();
+        if (text === '') return NaN;
+        return Number(text);
+    }
+
+    function pick(source, keys) {
+        for (var i = 0; i < keys.length; i++) {
+            var value = source[keys[i]];
+            if (value != null && value !== '') return value;
+        }
+        return undefined;
+    }
+
+    function normalizeStep(value) {
+        if (value == null || value === '') return SPEED_STEP;
+        var n = roundSpeed(parseSpeed(value));
+        if (!isFinite(n)) return SPEED_STEP;
+        for (var i = 0; i < STEP_CHOICES.length; i++) {
+            if (n === STEP_CHOICES[i]) return STEP_CHOICES[i];
+        }
+        return SPEED_STEP;
+    }
+
+    function normalizeBound(value, fallback) {
+        if (value == null || value === '') return fallback;
+        var n = roundSpeed(parseSpeed(value));
+        if (!isFinite(n) || n < MIN_SPEED || n > MAX_SPEED) return fallback;
         return n;
     }
 
-    function stepSpeed(current, delta) {
+    // Stored shape is { speedStep, minSpeed, maxSpeed }. { step, min, max } is
+    // accepted too, so resolving a result again is a no-op. An unknown step,
+    // a non-number, a bound outside 0.0625–16, or a minimum above the maximum
+    // falls back to that field's default (both bounds, when the range is reversed).
+    function resolveSettings(stored) {
+        var src = stored && typeof stored === 'object' ? stored : {};
+        var step = normalizeStep(pick(src, ['speedStep', 'step']));
+        var min = normalizeBound(pick(src, ['minSpeed', 'min']), MIN_SPEED);
+        var max = normalizeBound(pick(src, ['maxSpeed', 'max']), MAX_SPEED);
+        if (min > max) {
+            min = MIN_SPEED;
+            max = MAX_SPEED;
+        }
+        return { step: step, min: min, max: max };
+    }
+
+    // Empty means "use the default" and is not an adjustment. A provided value
+    // that resolveSettings did not keep is one.
+    function explicitlyDiffers(raw, resolved) {
+        if (raw == null) return false;
+        if (typeof raw === 'string' && raw.trim() === '') return false;
+        return roundSpeed(parseSpeed(raw)) !== resolved;
+    }
+
+    function explainSettings(stored) {
+        var settings = resolveSettings(stored);
+        var src = stored && typeof stored === 'object' ? stored : {};
+        var adjusted = explicitlyDiffers(pick(src, ['speedStep', 'step']), settings.step)
+            || explicitlyDiffers(pick(src, ['minSpeed', 'min']), settings.min)
+            || explicitlyDiffers(pick(src, ['maxSpeed', 'max']), settings.max);
+        return { settings: settings, adjusted: adjusted };
+    }
+
+    function clampSpeed(speed, limits) {
+        var bounds = resolveSettings(limits);
+        var n = roundSpeed(speed);
+        if (!isFinite(n)) n = 1;
+        if (n < bounds.min) return bounds.min;
+        if (n > bounds.max) return bounds.max;
+        return n;
+    }
+
+    function stepSpeed(current, delta, limits) {
         var base = roundSpeed(current);
         if (!isFinite(base)) base = 1;
-        return clampSpeed(base + Number(delta));
+        return clampSpeed(base + Number(delta), limits);
     }
 
     function formatSpeed(speed) {
@@ -51,12 +123,14 @@
     }
 
     // command is 'speed-up', 'speed-down', or 'speed-reset'.
-    // The step is applied to the current rate (the first video); reset ignores it.
-    function nextSpeed(current, command) {
-        if (command === 'speed-reset') return 1;
-        if (command === 'speed-up') return stepSpeed(current, SPEED_STEP);
-        if (command === 'speed-down') return stepSpeed(current, -SPEED_STEP);
-        return null;
+    // stored is the options object (or null for the defaults). The step is
+    // applied to the current rate; reset targets 1x, then the same clamp.
+    function nextSpeed(current, command, stored) {
+        if (command !== 'speed-reset' && command !== 'speed-up' && command !== 'speed-down') return null;
+        var settings = resolveSettings(stored);
+        if (command === 'speed-reset') return clampSpeed(1, settings);
+        var delta = command === 'speed-up' ? settings.step : -settings.step;
+        return stepSpeed(current, delta, settings);
     }
 
     function dismissOverlay() {
@@ -129,13 +203,13 @@
     // Reads the first <video>, writes every video, and shows a short toast.
     // Returns { speed, text, badge } for the service worker. speed is null
     // when there is nothing to change.
-    function runSpeedCommand(command) {
+    function runSpeedCommand(command, stored) {
         var videos = Array.prototype.slice.call(document.querySelectorAll('video'));
         if (!videos.length) {
             showSpeedOverlay('No video');
             return { speed: null, text: 'No video', badge: '' };
         }
-        var speed = nextSpeed(videos[0].playbackRate, command);
+        var speed = nextSpeed(videos[0].playbackRate, command, stored);
         if (speed == null) return { speed: null, text: '', badge: '' };
         videos.forEach(function (video) { video.playbackRate = speed; });
         var text = formatSpeed(speed);
@@ -147,7 +221,10 @@
         MIN_SPEED: MIN_SPEED,
         MAX_SPEED: MAX_SPEED,
         SPEED_STEP: SPEED_STEP,
+        STEP_CHOICES: STEP_CHOICES,
         roundSpeed: roundSpeed,
+        resolveSettings: resolveSettings,
+        explainSettings: explainSettings,
         clampSpeed: clampSpeed,
         stepSpeed: stepSpeed,
         formatSpeed: formatSpeed,

@@ -29,3 +29,13 @@ test('README documents the speed-step shortcuts and where to change them', () =>
     assert.match(readme, /0\.25/);
     assert.match(readme, /No video/);
 });
+
+test('README documents the options page', () => {
+    assert.match(readme, /## Options/);
+    assert.match(readme, /0\.05/);
+    assert.match(readme, /0\.1/);
+    assert.match(readme, /0\.5/);
+    assert.match(readme, /0\.0625/);
+    assert.match(readme, /chrome\.storage\.sync/);
+    assert.match(readme, /storage/);
+});
